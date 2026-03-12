@@ -4,7 +4,6 @@ import { motion, AnimatePresence } from 'motion/react';
 import { CheckCircle2, XCircle, AlertCircle, ArrowRight, Loader2, RefreshCcw, Home, Clock, Trophy, Star, ThumbsUp, BookOpen, Frown } from 'lucide-react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { io, Socket } from 'socket.io-client';
 import { questions } from '../data';
 import { Question, QuestionType, QuizAttempt, UserProfile } from '../types';
 import { getExplanation } from '../services/ai';
@@ -19,7 +18,7 @@ export default function Quiz() {
   const countParam = searchParams.get('count');
 
   const [quizQuestions, setQuizQuestions] = useState<Question[]>([]);
-  const [isLoading, setIsLoading] = useState(true); // BUG 6 fix
+  const [isLoading, setIsLoading] = useState(true);
   const [currentIndex, setCurrentIndex] = useState(0);
   
   // Answer states
@@ -30,7 +29,7 @@ export default function Quiz() {
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isAnswerCorrect, setIsAnswerCorrect] = useState<boolean | null>(null);
   const [score, setScore] = useState(0);
-  const scoreRef = useRef(0); // BUG 2 fix: track real-time score via ref
+  const scoreRef = useRef(0);
   const [isFinished, setIsFinished] = useState(false);
   const [startTime] = useState(Date.now());
   
@@ -42,39 +41,34 @@ export default function Quiz() {
   const [isAiLoading, setIsAiLoading] = useState(false);
   
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [socket, setSocket] = useState<Socket | null>(null);
-  const [studentName, setStudentName] = useState<string>('');
-  const [hasJoined, setHasJoined] = useState(false);
 
   useEffect(() => {
     const savedProfile = localStorage.getItem('examGeoProfile');
     if (savedProfile) {
       const parsed = JSON.parse(savedProfile);
       setProfile(parsed);
-      setStudentName(parsed.name || 'Học sinh ẩn danh');
-    } else {
-      setStudentName(`Học sinh ${Math.floor(Math.random() * 1000)}`);
     }
   }, []);
 
   useEffect(() => {
     const loadQuestions = async () => {
-      setIsLoading(true); // BUG 6 fix
+      setIsLoading(true);
       
       if (mode === 'exam' && examId) {
+        // Load exam from localStorage (created by TeacherDashboard)
         try {
-          const res = await fetch(`/api/exam/${examId}`);
-          const data = await res.json();
-          if (data.success) {
-            setQuizQuestions(data.exam.questions);
+          const storedExam = localStorage.getItem(`exam_${examId}`);
+          if (storedExam) {
+            const examData = JSON.parse(storedExam);
+            setQuizQuestions(examData.questions);
           } else {
-            alert(data.error || 'Không tìm thấy đề thi!');
+            alert('Không tìm thấy mã đề thi! Vui lòng kiểm tra lại.');
             navigate('/exam');
             return;
           }
         } catch (err) {
           console.error('Lỗi khi tải đề thi:', err);
-          alert('Lỗi kết nối đến máy chủ!');
+          alert('Lỗi khi đọc dữ liệu đề thi!');
           navigate('/exam');
           return;
         }
@@ -122,28 +116,13 @@ export default function Quiz() {
       }
       
       setTimeLeft(3000);
-      setIsLoading(false); // BUG 6 fix
+      setIsLoading(false);
     };
 
     loadQuestions();
   }, [mode, filter, examId, navigate]);
 
-  useEffect(() => {
-    if (mode === 'exam' && studentName && !hasJoined) {
-      const newSocket = io();
-      setSocket(newSocket);
-      
-      const targetExamId = examId || 'exam_local';
-      newSocket.emit('join_exam', { examId: targetExamId, studentName, profile });
-      setHasJoined(true);
-
-      return () => {
-        newSocket.disconnect();
-      };
-    }
-  }, [mode, studentName, hasJoined, examId, profile]);
-
-  // BUG 5 fix: Timer only runs in exam mode
+  // Timer only runs in exam mode
   useEffect(() => {
     if (mode !== 'exam') return;
     if (isFinished || quizQuestions.length === 0) return;
@@ -177,7 +156,6 @@ export default function Quiz() {
     return false;
   };
 
-  // BUG 4 fix: Normalize answer for short_answer comparison
   const normalizeAnswer = (val: string) => val.trim().toLowerCase().replace(/\s+/g, ' ');
 
   const handleSubmit = async () => {
@@ -206,25 +184,15 @@ export default function Quiz() {
       else if (correctCount === 4) pointsEarned = 1.0;
       
     } else if (currentQuestion.type === 'short_answer') {
-      // BUG 4 fix: Normalize both sides before comparing
       isCorrect = normalizeAnswer(saAnswer) === normalizeAnswer(currentQuestion.correctAnswer.toString());
       userAnswerForAi = saAnswer.trim();
       if (isCorrect) pointsEarned = 0.25;
     }
     
     const newScore = scoreRef.current + pointsEarned;
-    scoreRef.current = newScore; // BUG 2 fix: update ref immediately
+    scoreRef.current = newScore;
     setScore(newScore);
     setIsAnswerCorrect(isCorrect);
-    
-    if (socket && mode === 'exam') {
-      socket.emit('submit_answer', {
-        examId: examId || 'exam_local',
-        questionId: `q_${currentIndex}`,
-        isCorrect,
-        points: pointsEarned
-      });
-    }
     
     setIsAiLoading(true);
     const explanation = await getExplanation(
@@ -238,7 +206,7 @@ export default function Quiz() {
   };
 
   const handleNext = () => {
-    window.scrollTo({ top: 0, behavior: 'smooth' }); // BUG 7 fix
+    window.scrollTo({ top: 0, behavior: 'smooth' });
     if (currentIndex < quizQuestions.length - 1) {
       setCurrentIndex(i => i + 1);
       setMcAnswer(null);
@@ -248,18 +216,13 @@ export default function Quiz() {
       setIsAnswerCorrect(null);
       setAiExplanation(null);
     } else {
-      finishQuiz(scoreRef.current); // BUG 2 fix: pass ref value
+      finishQuiz(scoreRef.current);
     }
   };
 
-  // BUG 2 fix: accept final score as parameter to avoid stale closure
   const finishQuiz = (finalScore: number) => {
     setIsFinished(true);
     const timeSpent = Math.floor((Date.now() - startTime) / 1000);
-    
-    if (socket && mode === 'exam') {
-      socket.emit('finish_exam', { examId: examId || 'exam_local', timeSpent });
-    }
     
     const attempt: QuizAttempt = {
       id: Date.now().toString(),
@@ -282,7 +245,6 @@ export default function Quiz() {
     return acc;
   }, 0);
 
-  // FEAT 2: Grade/rating based on score out of 10
   const getGrade = (s: number, max: number) => {
     const normalized = max > 0 ? (s / max) * 10 : 0;
     if (normalized >= 9.0) return { label: 'Xuất sắc', icon: Trophy, color: 'text-yellow-600', bg: 'bg-yellow-50', border: 'border-yellow-200' };
@@ -292,7 +254,6 @@ export default function Quiz() {
     return { label: 'Cần cố gắng thêm', icon: Frown, color: 'text-rose-600', bg: 'bg-rose-50', border: 'border-rose-200' };
   };
 
-  // BUG 6 fix: Show spinner while loading
   if (isLoading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[50vh] gap-4">
@@ -324,7 +285,6 @@ export default function Quiz() {
           </div>
         )}
         
-        {/* FEAT 2: Grade badge */}
         <div className={cn("inline-flex items-center gap-2 px-5 py-2.5 rounded-full font-bold text-lg border mb-6", grade.bg, grade.color, grade.border)}>
           <GradeIcon className="w-6 h-6" />
           {grade.label}
@@ -368,7 +328,6 @@ export default function Quiz() {
     );
   }
 
-  // FEAT 1: Progress percentage
   const progressPercent = Math.round(((currentIndex) / quizQuestions.length) * 100);
 
   return (
@@ -378,7 +337,6 @@ export default function Quiz() {
           <div className="text-sm font-medium text-slate-500 bg-white px-3 py-1 rounded-full shadow-sm border border-slate-100">
             Câu {currentIndex + 1} / {quizQuestions.length}
           </div>
-          {/* BUG 5 fix: only show timer in exam mode */}
           {mode === 'exam' && (
             <div className={cn(
               "text-sm font-medium px-3 py-1 rounded-full shadow-sm border flex items-center gap-1.5 transition-colors",
@@ -394,7 +352,6 @@ export default function Quiz() {
         </div>
       </div>
 
-      {/* FEAT 1: Progress bar */}
       <div className="w-full bg-slate-200 rounded-full h-1.5 mb-6 overflow-hidden">
         <motion.div
           className="bg-emerald-500 h-1.5 rounded-full"
@@ -543,7 +500,6 @@ export default function Quiz() {
                     placeholder="Nhập số..."
                     className={cn(
                       "flex-1 p-4 rounded-xl border-2 outline-none transition-shadow text-lg font-medium",
-                      // BUG 4 fix: use normalizeAnswer for comparison
                       isSubmitted && normalizeAnswer(saAnswer) === normalizeAnswer(currentQuestion.correctAnswer.toString()) ? "border-emerald-500 bg-emerald-50 text-emerald-800" :
                       isSubmitted && normalizeAnswer(saAnswer) !== normalizeAnswer(currentQuestion.correctAnswer.toString()) ? "border-rose-500 bg-rose-50 text-rose-800" :
                       "border-slate-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500 bg-white"
